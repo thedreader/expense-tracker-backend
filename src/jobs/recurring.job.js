@@ -4,7 +4,7 @@ import Expense from "../models/Expense.js";
 
 //0 0 * * * => every day at midnight
 //*/1 * * * * => every minute (for testing)
-const recurringTask = cron.schedule("*/2 * * * *", async () => {
+const recurringTask = cron.schedule("0 0 * * *", async () => {
   console.log("running this cron now");
   
   try {
