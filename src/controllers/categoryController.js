@@ -48,6 +48,7 @@ export const deleteCategory = async (req, res) => {
     const userId = req.user.id;
     const categoryId = req.params.id;
 
+    // Check if category is in use in expenses or recurring charges
     const inExpenses = await Expense.exists({ userId, category: categoryId });
     const inRecurring = await RecurringCharge.exists({ userId, category: categoryId });
     if (inExpenses || inRecurring) {
