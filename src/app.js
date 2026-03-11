@@ -23,6 +23,10 @@ app.use('/expenses', expenseRoutes);
 app.use('/categories', categoryRoutes);
 app.use('/budget', monthlyBudgetRoutes);
 
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
 // app.use(errorHandler);
 
 export default app;
