@@ -44,15 +44,14 @@ export const register = async (req, res) => {
     await newUser.save();
 
     await Category.insertMany([
-      { userId: newUser._id, name: "Food", budgetType: "needs" },
-      { userId: newUser._id, name: "Travel", budgetType: "needs" },
-      { userId: newUser._id, name: "Bills and Utilities", budgetType: "needs" },
-      { userId: newUser._id, name: "Shopping", budgetType: "wants" },
-      { userId: newUser._id, name: "Entertainment", budgetType: "wants" },
-      { userId: newUser._id, name: "Health", budgetType: "needs" },
-      { userId: newUser._id, name: "Education", budgetType: "needs" },
-      { userId: newUser._id, name: "Rent", budgetType: "needs" },
-      { userId: newUser._id, name: "Misc", budgetType: "wants" },
+      { userId: newUser._id, name: "Food" },
+      { userId: newUser._id, name: "Travel" },
+      { userId: newUser._id, name: "Bills and Utilities" },
+      { userId: newUser._id, name: "Shopping" },
+      { userId: newUser._id, name: "Entertainment" },
+      { userId: newUser._id, name: "Health" },
+      { userId: newUser._id, name: "Education" },
+      { userId: newUser._id, name: "Misc" },
     ]);
 
     res.cookie("refreshToken", refreshToken, refreshCookieOptions);

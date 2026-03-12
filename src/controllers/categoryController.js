@@ -1,6 +1,7 @@
 import Category from "../models/Category.js";
 import Expense from "../models/Expense.js";
 import RecurringCharge from "../models/RecurringCharge.js";
+import mongoose from "mongoose";
 
 export const getCategories = async (req, res) => {
   try {
@@ -17,14 +18,9 @@ export const createCategory = async (req, res) => {
   try {
     const userId = req.user.id;
     const name = String(req.body?.name || "").trim();
-    const budgetType = req.body?.budgetType;
 
     if (!name) {
       return res.status(400).json({ message: "Category name is required" });
-    }
-
-    if (!budgetType) {
-      return res.status(400).json({ message: "Budget type is required" });
     }
 
     const existing = await Category.findOne({ userId, name });
@@ -32,7 +28,7 @@ export const createCategory = async (req, res) => {
       return res.status(400).json({ message: "Category already exists" });
     }
 
-    const category = await Category.create({ userId, name, budgetType: budgetType });
+    const category = await Category.create({ userId, name });
     res.status(201).json({ message: "Category created successfully", category });
   } catch (err) {
     if (err?.code === 11000) {
@@ -48,9 +44,13 @@ export const deleteCategory = async (req, res) => {
     const userId = req.user.id;
     const categoryId = req.params.id;
 
-    // Check if category is in use in expenses or recurring charges
+    if (!mongoose.isValidObjectId(categoryId)) {
+      return res.status(400).json({ message: "Invalid category ID" });
+    }
+
     const inExpenses = await Expense.exists({ userId, category: categoryId });
     const inRecurring = await RecurringCharge.exists({ userId, category: categoryId });
+
     if (inExpenses || inRecurring) {
       return res.status(400).json({
         message: "Category is in use and cannot be deleted",
@@ -68,4 +68,3 @@ export const deleteCategory = async (req, res) => {
     res.status(500).json({ message: "Error deleting category" });
   }
 };
-

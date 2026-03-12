@@ -1,9 +1,10 @@
 import Expense from "../models/Expense.js";
 import RecurringCharge from "../models/RecurringCharge.js";
 import Category from "../models/Category.js";
-import MonthlyBudget from "../models/MonthlyBudget.js";
+import MonthlySummary from "../models/MonthlySummary.js";
 import User from "../models/User.js";
 import mongoose from "mongoose";
+import { BUDGET_TYPES } from "../constants/budgetTypes.js";
 
 // Helper functions
 
@@ -53,64 +54,59 @@ const validateEditRecurringChargeInput = (amount, startDate) => {
   return null;
 };
 
-const validateUpdateExpenseInput = (name, amount, category) => {
-  if (name !== undefined && !name) {
-    return "Name cannot be empty";
-  }
-  if (amount !== undefined && amount < 1) {
-    return "Amount must be at least 1";
-  }
-  if (category !== undefined && !category) {
-    return "Category cannot be empty";
+const validateUpdateExpenseInput = (name, amount, category, budgetType) => {
+  if (name !== undefined && !name) return "Name cannot be empty";
+  if (amount !== undefined && amount < 1) return "Amount must be at least 1";
+  if (category !== undefined && !category) return "Category cannot be empty";
+  if (budgetType !== undefined && !BUDGET_TYPES.includes(budgetType)) {
+    return "Invalid budget type";
   }
   return null;
 };
 
-// Prepares the update fields for an expense update, resolving category if needed
 const prepareExpenseUpdateFields = async (userId, updateData) => {
   const updateFields = {};
-  const { name, amount, description, category, date } = updateData;
+  const { name, amount, description, category, date, budgetType } = updateData;
 
   if (name !== undefined) updateFields.name = name;
   if (amount !== undefined) updateFields.amount = amount;
   if (description !== undefined) updateFields.description = description;
   if (date !== undefined) updateFields.date = date;
+  if (budgetType !== undefined) updateFields.budgetType = budgetType;
 
-  // If category is being updated, resolve it and also update budgetType accordingly
   if (category !== undefined) {
     const resolvedCategory = await resolveCategory(userId, category);
     if (!resolvedCategory) {
       return { error: "Invalid category" };
     }
     updateFields.category = resolvedCategory._id;
-    updateFields.budgetType = resolvedCategory.budgetType;
+    // budgetType is no longer inherited from category
+    // only update it if explicitly provided in request
   }
 
   return updateFields;
 };
 
-const handleMonthlyBudgetUpdate = async (userId, oldExpense, newBudgetType, newAmount) => {
+const handleMonthlySummaryUpdate = async (userId, oldExpense, newBudgetType, newAmount) => {
   if (newBudgetType === oldExpense.budgetType) {
     const diff = newAmount - oldExpense.amount;
     if (diff !== 0) {
-      await updateMonthlyBudget(userId, oldExpense.date, diff, oldExpense.budgetType);
+      await updateMonthlySummary(userId, oldExpense.date, diff, oldExpense.budgetType);
     }
   } else {
-    await updateMonthlyBudget(userId, oldExpense.date, -oldExpense.amount, oldExpense.budgetType);
-    await updateMonthlyBudget(userId, oldExpense.date, newAmount, newBudgetType);
+    await updateMonthlySummary(userId, oldExpense.date, -oldExpense.amount, oldExpense.budgetType);
+    await updateMonthlySummary(userId, oldExpense.date, newAmount, newBudgetType);
   }
 };
 
-// Updates the MonthlyBudget document for the month the expense belongs to
-// amountDelta: positive when adding, negative when deleting, difference when updating
-const updateMonthlyBudget = async (userId, date, amountDelta, budgetType) => {
+const updateMonthlySummary = async (userId, date, amountDelta, budgetType) => {
   const expenseDate = new Date(date);
   const month = expenseDate.getMonth() + 1;
   const year = expenseDate.getFullYear();
 
   const user = await User.findById(userId);
 
-  await MonthlyBudget.findOneAndUpdate(
+  await MonthlySummary.findOneAndUpdate(
     { userId, month, year },
     {
       $inc: { [`spent.${budgetType}`]: amountDelta },
@@ -130,15 +126,19 @@ const updateMonthlyBudget = async (userId, date, amountDelta, budgetType) => {
 
 export const createExpense = async (req, res) => {
   try {
-    const { name, amount, description, category, date } = req.body;
+    const { name, amount, description, category, date, budgetType } = req.body;
     const userId = req.user.id;
 
-    if (!name || !amount || !category || !date) {
+    if (!name || !amount || !category || !date || !budgetType) {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
     if (amount < 1) {
       return res.status(400).json({ message: "Amount must be at least 1" });
+    }
+
+    if (!BUDGET_TYPES.includes(budgetType)) {
+      return res.status(400).json({ message: "Invalid budget type" });
     }
 
     const resolvedCategory = await resolveCategory(userId, category);
@@ -151,13 +151,13 @@ export const createExpense = async (req, res) => {
       amount,
       description: description || "",
       category: resolvedCategory._id,
-      budgetType: resolvedCategory.budgetType, // inherited from category
+      budgetType, // from request body, not category
       date,
       userId,
     });
     await newExpense.save();
 
-    await updateMonthlyBudget(userId, date, amount, resolvedCategory.budgetType);
+    await updateMonthlySummary(userId, date, amount, budgetType);
 
     res.status(201).json({ message: "Expense created successfully" });
   } catch (err) {
@@ -171,15 +171,19 @@ export const createExpense = async (req, res) => {
 
 export const createRecurringCharge = async (req, res) => {
   try {
-    const { name, amount, description, category, frequency, interval, startDate, endDate } = req.body;
+    const { name, amount, description, category, frequency, interval, startDate, endDate, budgetType } = req.body;
     const userId = req.user.id;
 
-    if (!name || !amount || !category || !frequency || !startDate) {
+    if (!name || !amount || !category || !frequency || !startDate || !budgetType) {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
     if (amount < 1) {
       return res.status(400).json({ message: "Amount must be at least 1" });
+    }
+
+    if (!BUDGET_TYPES.includes(budgetType)) {
+      return res.status(400).json({ message: "Invalid budget type" });
     }
 
     const resolvedCategory = await resolveCategory(userId, category);
@@ -194,7 +198,7 @@ export const createRecurringCharge = async (req, res) => {
       amount,
       description: description || "",
       category: resolvedCategory._id,
-      budgetType: resolvedCategory.budgetType, // inherited from category
+      budgetType, // from request body, not category
       userId,
       frequency,
       interval: interval || 1,
@@ -215,7 +219,7 @@ export const createRecurringCharge = async (req, res) => {
           name,
           amount,
           category: resolvedCategory._id,
-          budgetType: resolvedCategory.budgetType, // inherited from category
+          budgetType, // from request body, not category
           description: description || "",
           date: parsedStartDate,
           recurringCharge: savedRecurringCharge._id,
@@ -225,7 +229,7 @@ export const createRecurringCharge = async (req, res) => {
       { upsert: true },
     );
 
-    await updateMonthlyBudget(userId, parsedStartDate, amount, resolvedCategory.budgetType);
+    await updateMonthlySummary(userId, parsedStartDate, amount, budgetType);
 
     res.status(201).json({
       message: "Recurring charge created successfully",
@@ -289,7 +293,7 @@ export const getRecurringCharges = async (req, res) => {
 
 export const editRecurringCharge = async (req, res) => {
   try {
-    const { recurringChargeId, amount, description, frequency, interval, startDate, endDate, category } = req.body;
+    const { recurringChargeId, amount, description, frequency, interval, startDate, endDate, category, budgetType } = req.body;
     const userId = req.user.id;
 
     if (!recurringChargeId) {
@@ -301,6 +305,10 @@ export const editRecurringCharge = async (req, res) => {
       return res.status(400).json({ message: validationError });
     }
 
+    if (budgetType !== undefined && !BUDGET_TYPES.includes(budgetType)) {
+      return res.status(400).json({ message: "Invalid budget type" });
+    }
+
     const updateFields = {};
     if (amount !== undefined) updateFields.amount = amount;
     if (description !== undefined) updateFields.description = description;
@@ -308,13 +316,14 @@ export const editRecurringCharge = async (req, res) => {
     if (interval !== undefined) updateFields.interval = interval;
     if (startDate !== undefined) updateFields.startDate = startDate;
     if (endDate !== undefined) updateFields.endDate = endDate || null;
+    if (budgetType !== undefined) updateFields.budgetType = budgetType;
     if (category !== undefined) {
       const resolvedCategory = await resolveCategory(userId, category);
       if (!resolvedCategory) {
         return res.status(400).json({ message: "Invalid category" });
       }
       updateFields.category = resolvedCategory._id;
-      updateFields.budgetType = resolvedCategory.budgetType; // update budgetType if category changes
+      // budgetType no longer inherited from category
     }
 
     const updatedCharge = await RecurringCharge.findOneAndUpdate(
@@ -384,10 +393,6 @@ export const getExpensesByCategory = async (req, res) => {
       .populate("category", "name")
       .sort({ date: -1 });
 
-    if (!expenses || expenses.length === 0) {
-      return res.status(200).json({ message: `No expenses found for category: ${cat}` });
-    }
-
     res.status(200).json(expenses.map(serializeWithCategory));
   } catch (err) {
     console.error("Error fetching expenses by category: ", err);
@@ -398,10 +403,10 @@ export const getExpensesByCategory = async (req, res) => {
 export const updateExpense = async (req, res) => {
   try {
     const expenseId = req.params.id;
-    const { name, amount, description, category, date } = req.body;
+    const { name, amount, description, category, date, budgetType } = req.body;
     const userId = req.user.id;
 
-    const validationError = validateUpdateExpenseInput(name, amount, category);
+    const validationError = validateUpdateExpenseInput(name, amount, category, budgetType);
     if (validationError) {
       return res.status(400).json({ message: validationError });
     }
@@ -417,6 +422,7 @@ export const updateExpense = async (req, res) => {
       description,
       category,
       date,
+      budgetType,
     });
 
     if (updateFields.error) {
@@ -434,13 +440,10 @@ export const updateExpense = async (req, res) => {
     );
 
     const newBudgetType = updateFields.budgetType || oldExpense.budgetType;
-
-    // if amount is not provided, 
-    // use old amount for summary update (in case only category/budgetType changed)
-    const newAmount = amount ?? oldExpense.amount; 
+    const newAmount = amount ?? oldExpense.amount;
 
     if (amount !== undefined || updateFields.budgetType !== undefined) {
-      await handleMonthlyBudgetUpdate(userId, oldExpense, newBudgetType, newAmount);
+      await handleMonthlySummaryUpdate(userId, oldExpense, newBudgetType, newAmount);
     }
 
     res.status(200).json({ message: "Expense updated successfully" });
@@ -465,7 +468,7 @@ export const deleteExpense = async (req, res) => {
       return res.status(404).json({ message: "Expense not found" });
     }
 
-    await updateMonthlyBudget(req.user.id, expense.date, -expense.amount, expense.budgetType);
+    await updateMonthlySummary(req.user.id, expense.date, -expense.amount, expense.budgetType);
 
     res.status(200).json({ message: "Expense deleted successfully" });
   } catch (err) {
