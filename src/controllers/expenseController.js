@@ -1,10 +1,10 @@
 import Expense from "../models/Expense.js";
 import RecurringCharge from "../models/RecurringCharge.js";
 import Category from "../models/Category.js";
-import MonthlySummary from "../models/MonthlySummary.js";
+import MonthlySummary from "../models/MonthlyBudget.js";
 import User from "../models/User.js";
 import mongoose from "mongoose";
-import { BUDGET_TYPES } from "../constants/budgetTypes.js";
+import BUDGET_TYPES from '../utils/budgetTypes.js';
 
 // Helper functions
 
@@ -120,6 +120,28 @@ const updateMonthlySummary = async (userId, date, amountDelta, budgetType) => {
     },
     { upsert: true }
   );
+};
+
+// For editRecurringCharge - build update fields object based on provided input, with validation and category resolution
+const buildRecurringChargeUpdateFields = async (userId, fields) => {
+  const { amount, description, frequency, interval, startDate, endDate, budgetType, category } = fields;
+  const updateFields = {};
+
+  if (amount !== undefined) updateFields.amount = amount;
+  if (description !== undefined) updateFields.description = description;
+  if (frequency !== undefined) updateFields.frequency = frequency;
+  if (interval !== undefined) updateFields.interval = interval;
+  if (startDate !== undefined) updateFields.startDate = startDate;
+  if (endDate !== undefined) updateFields.endDate = endDate || null;
+  if (budgetType !== undefined) updateFields.budgetType = budgetType;
+
+  if (category !== undefined) {
+    const resolvedCategory = await resolveCategory(userId, category);
+    if (!resolvedCategory) return { error: "Invalid category" };
+    updateFields.category = resolvedCategory._id;
+  }
+
+  return updateFields;
 };
 
 // Controller functions
@@ -291,6 +313,8 @@ export const getRecurringCharges = async (req, res) => {
   }
 };
 
+
+
 export const editRecurringCharge = async (req, res) => {
   try {
     const { recurringChargeId, amount, description, frequency, interval, startDate, endDate, category, budgetType } = req.body;
@@ -309,21 +333,16 @@ export const editRecurringCharge = async (req, res) => {
       return res.status(400).json({ message: "Invalid budget type" });
     }
 
-    const updateFields = {};
-    if (amount !== undefined) updateFields.amount = amount;
-    if (description !== undefined) updateFields.description = description;
-    if (frequency !== undefined) updateFields.frequency = frequency;
-    if (interval !== undefined) updateFields.interval = interval;
-    if (startDate !== undefined) updateFields.startDate = startDate;
-    if (endDate !== undefined) updateFields.endDate = endDate || null;
-    if (budgetType !== undefined) updateFields.budgetType = budgetType;
-    if (category !== undefined) {
-      const resolvedCategory = await resolveCategory(userId, category);
-      if (!resolvedCategory) {
-        return res.status(400).json({ message: "Invalid category" });
-      }
-      updateFields.category = resolvedCategory._id;
-      // budgetType no longer inherited from category
+    const updateFields = await buildRecurringChargeUpdateFields(userId, {
+      amount, description, frequency, interval, startDate, endDate, budgetType, category
+    });
+
+    if (updateFields.error) {
+      return res.status(400).json({ message: updateFields.error });
+    }
+
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(400).json({ message: "No fields to update" });
     }
 
     const updatedCharge = await RecurringCharge.findOneAndUpdate(
