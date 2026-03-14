@@ -144,6 +144,26 @@ const buildRecurringChargeUpdateFields = async (userId, fields) => {
   return updateFields;
 };
 
+const buildDateFilter = (startDate, endDate) => {
+  const dateFilter = {};
+
+  if (startDate) {
+    const parsedStart = new Date(startDate);
+    if (Number.isNaN(parsedStart.getTime())) return { error: "Invalid startDate" };
+    parsedStart.setHours(0, 0, 0, 0);
+    dateFilter.$gte = parsedStart;
+  }
+
+  if (endDate) {
+    const parsedEnd = new Date(endDate);
+    if (Number.isNaN(parsedEnd.getTime())) return { error: "Invalid endDate" };
+    parsedEnd.setHours(23, 59, 59, 999);
+    dateFilter.$lte = parsedEnd;
+  }
+
+  return dateFilter;
+};
+
 // Controller functions
 
 export const createExpense = async (req, res) => {
@@ -365,7 +385,19 @@ export const editRecurringCharge = async (req, res) => {
 export const getExpenses = async (req, res) => {
   try {
     const userId = req.user.id;
-    const expenses = await Expense.find({ userId })
+    const { startDate, endDate } = req.query; // Optional date filters
+
+    const dateFilter = buildDateFilter(startDate, endDate);
+    if (dateFilter.error) {
+      return res.status(400).json({ message: dateFilter.error });
+    }
+
+    const query = { userId };
+    if (Object.keys(dateFilter).length > 0) {
+      query.date = dateFilter;
+    }
+
+    const expenses = await Expense.find(query)
       .populate("category", "name")
       .sort({ date: -1 });
 
@@ -399,16 +431,27 @@ export const getExpensesByCategory = async (req, res) => {
   try {
     const cat = req.params.category;
     const userId = req.user.id;
+    const { startDate, endDate } = req.query;
 
     const resolvedCategory = await resolveCategory(userId, cat);
     if (!resolvedCategory) {
       return res.status(404).json({ message: `Category not found: ${cat}` });
     }
 
-    const expenses = await Expense.find({
+    const dateFilter = buildDateFilter(startDate, endDate);
+    if (dateFilter.error) {
+      return res.status(400).json({ message: dateFilter.error });
+    }
+
+    const query = {
       userId,
       category: resolvedCategory._id,
-    })
+    };
+    if (Object.keys(dateFilter).length > 0) {
+      query.date = dateFilter;
+    }
+
+    const expenses = await Expense.find(query)
       .populate("category", "name")
       .sort({ date: -1 });
 
