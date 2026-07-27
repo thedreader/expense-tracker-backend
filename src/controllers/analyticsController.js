@@ -22,16 +22,25 @@ const getDateRange = (view, query) => {
       const inputDate = new Date(date);
       if (Number.isNaN(inputDate.getTime())) return { error: "Invalid date" };
 
-      // Find Monday of the week containing the input date
-      const day = inputDate.getDay();
-      const diff = day === 0 ? -6 : 1 - day;
-      const start = new Date(inputDate);
-      start.setDate(inputDate.getDate() + diff);
+      // Weeks are anchored to calendar-month dates: 1–7, 8–14, 15–21, and 22–month end.
+      const week = Math.min(Math.floor((inputDate.getDate() - 1) / 7) + 1, 4);
+      const start = new Date(
+        inputDate.getFullYear(),
+        inputDate.getMonth(),
+        (week - 1) * 7 + 1,
+      );
       start.setHours(0, 0, 0, 0);
 
-      // Sunday of that week
-      const end = new Date(start);
-      end.setDate(start.getDate() + 6);
+      const lastDay = new Date(
+        inputDate.getFullYear(),
+        inputDate.getMonth() + 1,
+        0,
+      ).getDate();
+      const end = new Date(
+        inputDate.getFullYear(),
+        inputDate.getMonth(),
+        week === 4 ? lastDay : Math.min(week * 7, lastDay),
+      );
       end.setHours(23, 59, 59, 999);
 
       return { start, end };
@@ -72,13 +81,13 @@ const getPeriodLabel = (view, start, end, query) => {
   switch (view) {
     case "daily":
       return {
-        label: start.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" }),
-        sub: fmt(start),
+        label: start.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }),
+        sub: "",
       };
     case "weekly":
       return {
-        label: `${fmt(start)} – ${fmt(end)}`,
-        sub: "7 days",
+        label: `Wk${Math.min(Math.floor((start.getDate() - 1) / 7) + 1, 4)}, ${start.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}`,
+        sub: `${fmt(start)} – ${fmt(end)}`,
       };
     case "monthly":
       return {
@@ -95,21 +104,29 @@ const getPeriodLabel = (view, start, end, query) => {
 
 // ─── Chart Data Helpers ───────────────────────────────────────────────────────
 
-// Groups expenses by day of week (for weekly view)
-const groupByDay = (expenses, start) => {
-  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const result = days.map((label) => ({
-    label,
-    total: 0,
-    needs: 0,
-    wants: 0,
-    investments: 0,
-  }));
+// Groups weekly expenses by actual month date, preserving the 7–10 day month-anchored range.
+const groupByDay = (expenses, start, end) => {
+  const result = [];
+  const cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+  const last = new Date(end);
+  last.setHours(0, 0, 0, 0);
+
+  while (cursor <= last) {
+    result.push({
+      label: String(cursor.getDate()),
+      total: 0,
+      needs: 0,
+      wants: 0,
+      investments: 0,
+    });
+    cursor.setDate(cursor.getDate() + 1);
+  }
 
   expenses.forEach((expense) => {
     const date = new Date(expense.date);
-    // getDay() returns 0=Sun,1=Mon...6=Sat — remap to 0=Mon...6=Sun
-    const dayIndex = (date.getDay() + 6) % 7;
+    const dayIndex = Math.floor((date - start) / (24 * 60 * 60 * 1000));
+    if (!result[dayIndex]) return;
     result[dayIndex].total += expense.amount;
     result[dayIndex][expense.budgetType] += expense.amount;
   });
@@ -119,11 +136,7 @@ const groupByDay = (expenses, start) => {
 
 // Groups expenses by week number within the month (for monthly view)
 const groupByWeek = (expenses, start) => {
-  // Calculate number of weeks in the month
-  const year = start.getFullYear();
-  const month = start.getMonth();
-  const lastDay = new Date(year, month + 1, 0).getDate();
-  const numWeeks = Math.ceil(lastDay / 7);
+  const numWeeks = 4;
 
   const result = Array.from({ length: numWeeks }, (_, i) => ({
     label: `W${i + 1}`,
@@ -135,7 +148,7 @@ const groupByWeek = (expenses, start) => {
 
   expenses.forEach((expense) => {
     const day = new Date(expense.date).getDate();
-    const weekIndex = Math.min(Math.floor((day - 1) / 7), numWeeks - 1);
+    const weekIndex = Math.min(Math.floor((day - 1) / 7), 3);
     result[weekIndex].total += expense.amount;
     result[weekIndex][expense.budgetType] += expense.amount;
   });
@@ -254,10 +267,10 @@ export const getAnalytics = async (req, res) => {
     // ── Chart Data ────────────────────────────────────────────────────────────
     let chartData;
     switch (view) {
-      case "daily":   chartData = groupByHour(expenses);        break;
-      case "weekly":  chartData = groupByDay(expenses, start);  break;
+      case "daily": chartData = groupByHour(expenses); break;
+      case "weekly": chartData = groupByDay(expenses, start, end); break;
       case "monthly": chartData = groupByWeek(expenses, start); break;
-      case "yearly":  chartData = groupByMonth(expenses);       break;
+      case "yearly": chartData = groupByMonth(expenses); break;
     }
 
     // ── Category Breakdown ────────────────────────────────────────────────────

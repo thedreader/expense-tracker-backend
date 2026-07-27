@@ -55,6 +55,7 @@ const validateEditRecurringChargeInput = (amount, startDate) => {
 };
 
 const validateUpdateExpenseInput = (name, amount, category, budgetType) => {
+  if (name !== undefined && !name) return "Name cannot be empty";
   if (amount !== undefined && amount < 1) return "Amount must be at least 1";
   if (category !== undefined && !category) return "Category cannot be empty";
   if (budgetType !== undefined && !BUDGET_TYPES.includes(budgetType)) {
@@ -179,45 +180,119 @@ const buildDateFilter = (startDate, endDate) => {
   return dateFilter;
 };
 
+const prepareExpenseInput = async (userId, input) => {
+  const {
+    name,
+    amount,
+    description,
+    category,
+    date,
+    budgetType,
+  } = input || {};
+  const normalizedBudgetType = budgetType || "wants";
+
+  if (!name || !amount || !category || !date) {
+    return { error: "Missing required fields" };
+  }
+
+  const normalizedAmount = Number(amount);
+  if (!Number.isFinite(normalizedAmount) || normalizedAmount < 1) {
+    return { error: "Amount must be at least 1" };
+  }
+
+  if (!BUDGET_TYPES.includes(normalizedBudgetType)) {
+    return { error: "Invalid budget type" };
+  }
+
+  if (Number.isNaN(new Date(date).getTime())) {
+    return { error: "Invalid date" };
+  }
+
+  const resolvedCategory = await resolveCategory(userId, category);
+  if (!resolvedCategory) {
+    return { error: "Invalid category" };
+  }
+
+  return {
+    document: {
+      name,
+      amount: normalizedAmount,
+      description: description || "",
+      category: resolvedCategory._id,
+      budgetType: normalizedBudgetType,
+      date,
+      userId,
+    },
+  };
+};
+
 // Controller functions
 
 export const createExpense = async (req, res) => {
   try {
-    const { name, amount, description, category, date, budgetType } = req.body;
     const userId = req.user.id;
-    const normalizedBudgetType = budgetType || "wants";
 
-    if (!amount || !category || !date) {
-      return res.status(400).json({ message: "Missing required fields" });
+    if (Array.isArray(req.body?.expenses)) {
+      const preparedItems = await Promise.all(
+        req.body.expenses.map((input) => prepareExpenseInput(userId, input)),
+      );
+      const failed = [];
+      const validItems = [];
+
+      preparedItems.forEach((item, index) => {
+        if (item.error) {
+          failed.push({ index, reason: item.error });
+        } else {
+          validItems.push(item.document);
+        }
+      });
+
+      if (validItems.length === 0) {
+        return res.status(201).json({ created: [], failed });
+      }
+
+      const insertedExpenses = await Expense.insertMany(validItems);
+      await Promise.all(
+        insertedExpenses.map((expense) =>
+          updateMonthlySummary(
+            userId,
+            expense.date,
+            expense.amount,
+            expense.budgetType,
+          ),
+        ),
+      );
+
+      const populatedExpenses = await Expense.find({
+        _id: { $in: insertedExpenses.map((expense) => expense._id) },
+        userId,
+      }).populate("category", "name");
+      const populatedById = new Map(
+        populatedExpenses.map((expense) => [expense._id.toString(), expense]),
+      );
+
+      return res.status(201).json({
+        created: insertedExpenses.map((expense) =>
+          serializeWithCategory(populatedById.get(expense._id.toString()) || expense),
+        ),
+        failed,
+      });
     }
 
-    if (amount < 1) {
-      return res.status(400).json({ message: "Amount must be at least 1" });
+    const prepared = await prepareExpenseInput(userId, req.body);
+    if (prepared.error) {
+      return res.status(400).json({ message: prepared.error });
     }
 
-    if (!BUDGET_TYPES.includes(normalizedBudgetType)) {
-      return res.status(400).json({ message: "Invalid budget type" });
-    }
-
-    const resolvedCategory = await resolveCategory(userId, category);
-    if (!resolvedCategory) {
-      return res.status(400).json({ message: "Invalid category" });
-    }
-
-    const normalizedName = String(name || "").trim() || resolvedCategory.name;
-
-    const newExpense = new Expense({
-      name: normalizedName,
-      amount,
-      description: description || "",
-      category: resolvedCategory._id,
-      budgetType: normalizedBudgetType, // from request body, not category
-      date,
-      userId,
-    });
+    const newExpense = new Expense(prepared.document);
     await newExpense.save();
 
-    await updateMonthlySummary(userId, date, amount, normalizedBudgetType);
+    await updateMonthlySummary(
+      userId,
+      newExpense.date,
+      newExpense.amount,
+      newExpense.budgetType,
+    );
 
     res.status(201).json({ message: "Expense created successfully" });
   } catch (err) {
@@ -235,7 +310,7 @@ export const createRecurringCharge = async (req, res) => {
     const userId = req.user.id;
     const normalizedBudgetType = budgetType || "wants";
 
-    if (!amount || !category || !frequency || !startDate) {
+    if (!name || !amount || !category || !frequency || !startDate) {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
@@ -252,12 +327,10 @@ export const createRecurringCharge = async (req, res) => {
       return res.status(400).json({ message: "Invalid category" });
     }
 
-    const normalizedName = String(name || "").trim() || resolvedCategory.name;
-
     const parsedStartDate = new Date(startDate);
 
     const newRecurringCharge = new RecurringCharge({
-      name: normalizedName,
+      name,
       amount,
       description: description || "",
       category: resolvedCategory._id,
@@ -279,7 +352,7 @@ export const createRecurringCharge = async (req, res) => {
       {
         $setOnInsert: {
           userId,
-          name: normalizedName,
+          name,
           amount,
           category: resolvedCategory._id,
           budgetType: normalizedBudgetType, // from request body, not category
@@ -499,21 +572,8 @@ export const updateExpense = async (req, res) => {
       return res.status(404).json({ message: "Expense not found" });
     }
 
-    let normalizedName = name;
-    if (name !== undefined && !String(name).trim()) {
-      const fallbackCategory = category !== undefined
-        ? await resolveCategory(userId, category)
-        : await Category.findOne({ _id: oldExpense.category, userId });
-      if (!fallbackCategory) {
-        return res.status(400).json({ message: "Invalid category" });
-      }
-      normalizedName = fallbackCategory.name;
-    } else if (typeof name === "string") {
-      normalizedName = name.trim();
-    }
-
     const updateFields = await prepareExpenseUpdateFields(userId, {
-      name: normalizedName,
+      name,
       amount,
       description,
       category,
