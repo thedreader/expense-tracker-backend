@@ -7,6 +7,7 @@ import expenseRoutes from './routes/expenseRoutes.js';
 import categoryRoutes from './routes/categoryRoutes.js';
 import monthlyBudgetRoutes from './routes/monthlyBudgetRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
+import aiRoutes from './routes/aiRoutes.js';
 // import { errorHandler } from './middlewares/errorMiddleware.js';
 
 const app = express();
@@ -24,6 +25,7 @@ app.use('/expenses', expenseRoutes);
 app.use('/categories', categoryRoutes);
 app.use('/budget', monthlyBudgetRoutes);
 app.use('/analytics', analyticsRoutes);
+app.use('/ai', aiRoutes);
 
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok" });
