@@ -5,11 +5,11 @@ import './jobs/recurring.job.js';
 
 dotenv.config();
 
-const port =  5000;
+const port = 5000;
 
 connectDb();
 
 app.listen(port, () => {
    console.log('Server is running on ' + port);
-   
+
 })

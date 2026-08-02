@@ -43,11 +43,18 @@ Rules:
 
 Text: "${text}"`;
 
+    const t0 = Date.now();
     const result = await ai.models.generateContent({
       model: "gemini-3.6-flash",
       contents: prompt,
-      config: { responseMimeType: "application/json", responseSchema },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema,
+        thinkingConfig: { thinkingLevel: "low" },
+        httpOptions: { timeout: 15_000 },
+      },
     });
+    console.log(`[AI] Gemini call took ${Date.now() - t0}ms`);
 
     const parsed = JSON.parse(result.text);
     const categoryMap = new Map(categoryNames.map((n) => [n.toLowerCase(), n]));
@@ -64,6 +71,10 @@ Text: "${text}"`;
   } catch (err) {
     if (err?.status === 429) {
       return res.status(429).json({ message: "AI rate limit hit — try again shortly" });
+    }
+    if (err?.name === "AbortError" || err?.name === "TimeoutError" || err?.code === "UND_ERR_CONNECT_TIMEOUT") {
+      console.error("[AI] Gemini call timed out", err);
+      return res.status(504).json({ message: "AI took too long — please try again" });
     }
     console.error("Error parsing expense text: ", err);
     res.status(500).json({ message: "Could not parse expense text" });
